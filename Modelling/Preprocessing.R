@@ -70,7 +70,7 @@ reddit_submissions_df <-
   )
 
 reddit_comment_df <- 
-  collect(reddit_submissions) %>%
+  collect(reddit_comments) %>%
   arrange(week_number) %>%
   group_by(week_number) %>% 
   summarise(
@@ -87,13 +87,13 @@ forecast_df <-
   full_join(reddit_submissions_df, by = 'week_number') %>%
   full_join(reddit_comment_df, by = 'week_number') %>%
   full_join(reddit_features_df, by = 'week_number') %>%
-  mutate(
+  transmute(
+    week_number,
     tweet_count = replace_na(tweet_count, 0),
     tk_zika = replace_na(tk_zika, 0),
     tk_zikv = replace_na(tk_zikv, 0),
     tk_mosquito = replace_na(tk_mosquito, 0),
     tk_aedes = replace_na(tk_aedes, 0),
-    tk_gullain_barr = replace_na(tk_gullain_barr, 0),
     tk_flavivirus = replace_na(tk_flavivirus, 0),
     submission_count = replace_na(submission_count, 0),
     ph_account_counts = replace_na(ph_account_counts, 0),
@@ -106,5 +106,23 @@ forecast_df <-
     num_health_comments = replace_na(num_health_comments, 0)
   )
 
+counts <- read_csv("counts.csv")
+
+counts <- counts %>% select(week_number = epoch, observed)
+
+forecast_df <- forecast_df %>% 
+  full_join(counts, by = 'week_number') %>% 
+  arrange(week_number) %>%
+  mutate(
+    num_science_submissions = as.integer(num_science_submissions),
+    num_science_comments = as.integer(num_science_comments),
+    num_zika_submissions = as.integer(num_zika_submissions),
+    num_zika_comments = as.integer(num_zika_comments),
+    num_health_submissions = as.integer(num_health_submissions),
+    num_health_comments = as.integer(num_health_comments)
+  )
+
+
+forecast_df$week_number <- NULL
 
 
