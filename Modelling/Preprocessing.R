@@ -11,6 +11,10 @@ con <- DBI::dbConnect(RPostgres::Postgres(),
 # tweets
 zika_tweets <- collect(tbl(con, "outbreak_tweets_extended"))
 
+# users
+twitter_users <- collect(tbl(con, "twitter_users"))
+
+
 # reddit submissions
 reddit_submissions <- collect(tbl(con, "outbreak_reddit_submissions"))
 
@@ -108,7 +112,7 @@ forecast_df <-
 
 counts <- read_csv("counts.csv")
 
-counts <- counts %>% select(week_number = epoch, observed)
+counts <- counts %>% select(week_number = epoch, brazil_counts = observed)
 
 forecast_df <- forecast_df %>% 
   full_join(counts, by = 'week_number') %>% 
@@ -122,7 +126,40 @@ forecast_df <- forecast_df %>%
     num_health_comments = as.integer(num_health_comments)
   )
 
+## Adding US Case Counts
+
+# 2016
+us_cc_2016 <- read_csv("../Data/infrequent_disease_case_counts_2016.csv") %>%
+  filter(startsWith(tolower(Disease), "zika")) %>%
+  select(week_number = "MMWR week", cum_count = "Cum 2016", cur_count = "Current week") %>%
+  arrange(week_number) %>%
+  group_by(week_number) %>%
+  summarise(cum_count = sum(cum_count, na.rm = TRUE), cur_count16 = sum(cur_count, na.rm = TRUE)) %>%
+  mutate(prev_week = append(0, cum_count[-n()]), observed16 = cum_count - prev_week) %>%
+  select(week_number, observed16, cur_count16)
+
+# 2017
+us_cc_2017 <- read_csv("../Data/infrequent_disease_case_counts_2017.csv") %>%
+  filter(startsWith(tolower(Disease), "zika")) %>%
+  select(week_number = "MMWR week", cum_count = "Cum 2017", cur_count = "Current week") %>%
+  filter(!is.na(week_number)) %>%
+  group_by(week_number) %>%
+  summarise(cum_count = sum(cum_count, na.rm = TRUE), cur_count17 = sum(cur_count, na.rm = TRUE)) %>%
+  mutate(prev_week = append(0, cum_count[-n()]), observed17 = cum_count - prev_week) %>%
+  select(week_number, observed17, cur_count17)
+
+# 2015, 2016, 2017
+us_counts <- append(rep(0, 52+15), us_cc_2016$observed16)
+us_counts <- append(us_counts, us_cc_2017$observed17)
+us_cc <- as.data.frame(cbind(week_number = seq(1, 156), observed = us_counts))
+
+# Combining data
+forecast_df <- forecast_df %>% 
+  full_join(us_cc, by = 'week_number') %>%
+  arrange(week_number)
 
 forecast_df$week_number <- NULL
+
+  
 
 
