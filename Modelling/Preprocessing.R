@@ -137,6 +137,7 @@ us_cc_2016 <- read_csv("../Data/infrequent_disease_case_counts_2016.csv") %>%
   summarise(cum_count = sum(cum_count, na.rm = TRUE), cur_count16 = sum(cur_count, na.rm = TRUE)) %>%
   mutate(prev_week = append(0, cum_count[-n()]), observed16 = cum_count - prev_week) %>%
   select(week_number, observed16, cur_count16)
+us_cc_2016[1, "observed16"] <- us_cc_2016[1, "cur_count16"]
 
 # 2017
 us_cc_2017 <- read_csv("../Data/infrequent_disease_case_counts_2017.csv") %>%
@@ -147,6 +148,8 @@ us_cc_2017 <- read_csv("../Data/infrequent_disease_case_counts_2017.csv") %>%
   summarise(cum_count = sum(cum_count, na.rm = TRUE), cur_count17 = sum(cur_count, na.rm = TRUE)) %>%
   mutate(prev_week = append(0, cum_count[-n()]), observed17 = cum_count - prev_week) %>%
   select(week_number, observed17, cur_count17)
+us_cc_2017[1, "observed17"] <- us_cc_2017[1, "cur_count17"]
+
 
 # 2015, 2016, 2017
 us_counts <- append(rep(0, 52+15), us_cc_2016$observed16)

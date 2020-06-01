@@ -1,17 +1,78 @@
-library(forecast)
-library(MASS)
+library(tidyverse) # data manipulation
+library(forecast) # for ts modelling
+library(urca) # for unit root test
 
+# Imputing value for -ve case count observed in 2017
+observations_to_impute <- c(123)
+forecast_df[observations_to_impute,"observed"] <- (forecast_df[observations_to_impute-1,"observed"] + forecast_df[observations_to_impute+1,"observed"])/2
+
+
+# Normalzing couts
 scaled_forecast <- forecast_df %>%
   mutate_all(scale)
 
+# Time series object
+ts_obj <- ts(forecast_df, start = c(2015, 1), end = c(2017, 52) , frequency = 52)
 
-# Create timeseries
-ts_obj <- ts(forecast_df[53:105,], frequency = 52)
+# Time series object with scaled counts
+ts_obj_scaled <- ts(scaled_forecast, start = c(2015, 1), end = c(2017, 52), frequency = 52)
 
-ts_obj_scaled <- ts(scaled_forecast[53:105,], frequency = 52)
 
-# EDA to determine hyperparameters (like pdq values -> this is where the ACF plots kick in)
-# Correlation plots
+# Timeseries plots
+
+# Obserevations + Twitter
+autoplot(ts_obj_scaled[,c("observed", "tweet_count")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Tweet Count"))
+
+# Observations + Reddit
+autoplot(ts_obj_scaled[,c("observed", "submission_count", "comment_count")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Reddit Submission Count", "Reddit Comment Count"))
+
+
+# Observations + Brazil
+autoplot(ts_obj_scaled[,c("observed", "brazil_counts")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Brazil Case Counts"))
+
+
+# Observations + Public Health Account Tweets
+autoplot(ts_obj_scaled[,c("observed", "ph_account_counts")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Public Health Account Tweet Counts"))
+
+
+# Is our data stationary?
+# unit root test
+observed_vals <- forecast_df %>% 
+  mutate(observed = if_else(is.na(observed), 0, observed)) 
+
+observed_vals$observed %>% ggtsdisplay(main="")
+
+
+# Our data is stationary
+ur.df(diff(observed_vals$observed)) %>% summary()
+ndiffs(observed_vals$observed)
+
+# Determine if there is auto-correlation in our data
+acf(diff(forecast_df$observed), na.action = na.omit)
+Box.test(diff(observed_vals$observed), lag = 2)
+
+
+# Cross Correlation plots
+ccf(x = diff(forecast_df$observed), y = diff(forecast_df$brazil_counts), na.action = na.omit)
+
+  
+ccf(x = diff(forecast_df$observed), y = diff(forecast_df$submission_count), na.action = na.omit)
+
+
+ccf(x = diff(forecast_df$observed), y = diff(forecast_df$tweet_count), na.action = na.omit)
+
 
 # Modelling
 
@@ -41,14 +102,32 @@ cbind(Data = ts_obj_scaled[,"observed"],
   geom_abline(intercept=0, slope=1)
 
 
-# Exponential Smoothing (weighted average of your past values)
+
 
 # ARIMA (to leverage past data to predict future info)
 # Brazil + lag to predict US counts
-ar_li <- arima(ts_obj[,"observed"],  order=c(3, 1, 1))
+ar_1 <- Arima(ts_obj[53:104,"observed"], order=c(3, 1, 0))
+f1 <- forecast(ar_1)
+summary(ar_1)
 
 
+ar_2 <- Arima(ts_obj[53:104,"observed"], xreg = ts_obj[53:104, c("tweet_count")], order=c(1, 1, 0))
+f2 <- forecast(ar_2, xreg = ts_obj[53:104, c("tweet_count")])
+summary(ar_2)
 
-# Evaluation
+
+# Visualize Fitted vs Actual
+predictions <- as.data.frame(cbind(
+  week = 1:52,
+  actual = ts_obj[53:104, c("observed")],
+  model1 = f1$fitted,
+  model2 = f2$fitted
+  ))
+
+predictions %>%
+  gather(key = "Model", value = "Prediction",  c("actual", "model1", "model2")) %>%
+  ggplot(aes(x = week, y = Prediction, color = Model)) +
+  geom_line()
+
 
 
