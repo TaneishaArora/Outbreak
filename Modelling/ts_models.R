@@ -76,6 +76,48 @@ ccf(x = diff(forecast_df$observed), y = diff(forecast_df$tweet_count), na.action
 
 # Modelling
 
+
+# ARIMA (to leverage past data to predict future info)
+
+# Lagged predictors
+lagged_predictors <- cbind(
+  lagged_brazil_counts = stats::lag(ts_obj[, "brazil_counts"], 6),
+  lagged_reddit_counts = stats::lag(ts_obj[, "submission_count"], 6)
+)
+
+
+ar_1 <- Arima(ts_obj[53:104,"observed"], order=c(3, 1, 0))
+f1 <- forecast(ar_1)
+summary(ar_1)
+
+
+ar_2 <- Arima(ts_obj[53:104,"observed"], xreg = ts_obj[53:104, c("tweet_count")], order=c(3, 1, 0))
+f2 <- forecast(ar_2, xreg = ts_obj[53:104, c("tweet_count")])
+summary(ar_2)
+
+ar_3 <- Arima(ts_obj[53:104,"observed"], xreg = lagged_predictors[53:104, c("lagged_brazil_counts")], order=c(2, 1, 0))
+f3 <- forecast(ar_3, xreg = lagged_predictors[53:104, c("lagged_brazil_counts")])
+summary(ar_3)
+
+
+# Visualize Fitted vs Actual
+predictions <- as.data.frame(cbind(
+  week = 1:52,
+  actual = ts_obj[53:104, c("observed")],
+  model1 = f1$fitted,
+  model2 = f2$fitted,
+  model3 = f3$fitted
+  ))
+
+predictions %>%
+  gather(key = "Model", value = "Prediction",  c("actual", "model1", "model2", "model3")) %>%
+  ggplot(aes(x = week, y = Prediction, color = Model)) +
+  geom_line()
+
+
+##############################################
+
+
 # Time Series Linear Regression (use info at specific time point)
 # Tweet Count
 lr_baseline_twitter <- tslm(observed ~ tweet_count, data = ts_obj)
@@ -100,34 +142,5 @@ cbind(Data = ts_obj_scaled[,"observed"],
   xlab("Data (actual values)") +
   ggtitle("Percent change in US consumption expenditure") +
   geom_abline(intercept=0, slope=1)
-
-
-
-
-# ARIMA (to leverage past data to predict future info)
-# Brazil + lag to predict US counts
-ar_1 <- Arima(ts_obj[53:104,"observed"], order=c(3, 1, 0))
-f1 <- forecast(ar_1)
-summary(ar_1)
-
-
-ar_2 <- Arima(ts_obj[53:104,"observed"], xreg = ts_obj[53:104, c("tweet_count")], order=c(1, 1, 0))
-f2 <- forecast(ar_2, xreg = ts_obj[53:104, c("tweet_count")])
-summary(ar_2)
-
-
-# Visualize Fitted vs Actual
-predictions <- as.data.frame(cbind(
-  week = 1:52,
-  actual = ts_obj[53:104, c("observed")],
-  model1 = f1$fitted,
-  model2 = f2$fitted
-  ))
-
-predictions %>%
-  gather(key = "Model", value = "Prediction",  c("actual", "model1", "model2")) %>%
-  ggplot(aes(x = week, y = Prediction, color = Model)) +
-  geom_line()
-
 
 
