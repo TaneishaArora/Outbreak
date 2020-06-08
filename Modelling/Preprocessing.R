@@ -1,3 +1,8 @@
+# Required Packages
+# tidyverse
+# RPostgres
+# DBI
+
 library(tidyverse)
 
 # Establishing connection with database
@@ -163,6 +168,8 @@ forecast_df <- forecast_df %>%
 
 forecast_df$week_number <- NULL
 
+# Write to csv to avoid preprocessing every time
+write_csv(forecast_df, "../Data/zika_timeseries.csv")
   
 
 
