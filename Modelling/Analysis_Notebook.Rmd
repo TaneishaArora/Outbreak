@@ -9,13 +9,12 @@ output: html_document
 library(tidyverse) # data manipulation
 library(forecast) # for ts modelling
 library(urca) # for unit root test
+library(ggplot2) # for visualizations
 
 # for global settings (use knitr)
 knitr::opts_chunk$set(
   echo = FALSE,
   fig.align = "center",
-  fig.width = 8,
-  fig.height = 6,
   fig.show = TRUE
 )
 ```
@@ -262,5 +261,218 @@ ggCcf(x = diff(forecast_df$observed), y = diff(forecast_df$ph_account_counts), n
 
 
 <p>**Observations:** The number of tweets made by Public Health affiliated accounts seem to be highly cross-correlated with US case counts for lag terms of 2, 4, and 6. The recurrance of a significant corss-correlation for every two weeks into the past is suggestive of a peak and then fall. So, it seems like the number of tweets from two weeks ago might be most useful for Zika case count forecasting.</p>
+
+
+## 2. Modelling
+
+<p> Now that we have established a reasonable understanding of our data and how various features are/could be associated with our outcome variable, Weekly Reported Cases of Zika in the US, we can begin trying out different models.</p>
+
+### Purely Autoregressive Models
+#### ARIMA(1,1)
+```{r}
+ar_1 <- Arima(ts_obj[53:104,"observed"], order=c(1, 1, 0))
+f1 <- forecast(ar_1)
+summary(ar_1)
+```
+
+#### ARIMA(2,1)
+```{r}
+ar_2 <- Arima(ts_obj[53:104,"observed"], order=c(2, 1, 0))
+f2 <- forecast(ar_2)
+summary(ar_2)
+```
+
+#### ARIMA(3,1)
+```{r}
+ar_3 <- Arima(ts_obj[53:104,"observed"], order=c(3, 1, 0))
+f3 <- forecast(ar_3)
+summary(ar_3)
+```
+
+<p> Amongst the three, purely autoregressive models we tried, the models with lags of 2 and 3 weeks seem to perform better than the model where the lag is set to 1 week. The AIC value is the smallest for the `ARIMA(2, 1)` model, while the root mean squared error (RMSE) is lowest for the `ARIMA(3,1)` model. The RMSE can be interpretted as the number of cases our prediction was off by on average.</p>
+
+<p>We decided to proceed to use the Weekly Zika Case Counts for time __T-3__ to predict the cases at time __T__</p>
+
+#### Autoregressive Models with (lagged) covariates
+
+<p>Having selected the autoregressive component model, we can now experiment with additional covariates and their corresponding lags. Based on the timeseries and cross-correlation plots we explored earlier, the features which seem most likely to be useful in explaining the variance in weekly US case counts (our response) are listed with their respective lags below:</p>
+
+* Weekly cases in Brazil
+* Weekly Reddit submission count
+* Weekly Tweet count
+* Weekly number of Tweets shared by Public Health related accounts
+* Weekly count of submissions made to Science subreddit
+
+<p>We will first experiment with how these different covariates influence the RMSE and improve or worsen our predictive performance.</p>
+
+#### ARIMA(3,1) + Brazil Case Count
+```{r}
+ar_brazil <- Arima(
+  ts_obj[53:104,"observed"],
+  xreg = ts_obj[53:104, c("brazil_counts")], 
+  order=c(3, 1, 0)
+  )
+f_brazil <- forecast(
+  ar_brazil, 
+  xreg = ts_obj[53:104, c("brazil_counts")]
+  )
+summary(ar_brazil)
+```
+
+
+#### ARIMA(3,1) + Tweet Count
+```{r}
+ar_tweet <- Arima(
+  ts_obj[53:104,"observed"],
+  xreg = ts_obj[53:104, c("tweet_count")], 
+  order=c(3, 1, 0)
+  )
+f_tweet <- forecast(
+  ar_tweet, 
+  xreg = ts_obj[53:104, c("tweet_count")]
+  )
+summary(ar_tweet)
+```
+
+#### ARIMA(3,1) + Reddit Science Submissions
+```{r}
+ar_sci_submission <- Arima(
+  ts_obj[53:104,"observed"],
+  xreg = ts_obj[53:104, c("num_science_submissions")], 
+  order=c(3, 1, 0)
+  )
+f_sci_submission <- forecast(
+  ar_sci_submission, 
+  xreg = ts_obj[53:104, c("num_science_submissions")]
+  )
+summary(ar_sci_submission)
+```
+
+#### ARIMA(3,1) + Public Health Account Tweets
+```{r}
+ar_ph_account <- Arima(
+  ts_obj[53:104,"observed"],
+  xreg = ts_obj[53:104, c("ph_account_counts")], 
+  order=c(3, 1, 0)
+  )
+f_ph_account <- forecast(
+  ar_ph_account, 
+  xreg = ts_obj[53:104, c("ph_account_counts")]
+  )
+summary(ar_ph_account)
+```
+
+<p>From the above models, where all we changed was the covariate included, it seems like the ARIMA(3,1) model with Tweet count and Public Health Tweet count had the lowest AIC values of __543.04__ and __544.74__, respectively. Corresponding RMSE values for these two models is also relatively lower than the other models tried out in this section.</p>
+
+<p> It will be interesting to see if we can improve our prediction by incorporating both these covariates into a single model</p>
+
+
+#### ARIMA(3,1) + Tweet Count + Public Health Account Tweets
+```{r}
+ar_tweet_ph_account <- Arima(
+  ts_obj[53:104,"observed"],
+  xreg = ts_obj[53:104, c("tweet_count", "ph_account_counts")], 
+  order=c(3, 1, 0)
+  )
+f_tweet_ph_account <- forecast(
+  ar_tweet_ph_account, 
+  xreg = ts_obj[53:104, c("tweet_count", "ph_account_counts")]
+  )
+summary(ar_tweet_ph_account)
+```
+
+<p>This model that incorporates both, the Tweet Count and Number of Tweets shared by Public Health accounts has the lowest RMSE value we've observed so far (**44.086**)!</p>
+
+<p>Now we will experiment with the lags of these shortlisted features to see if our model can be made even better.</p>
+
+##### Setting up some lagged covariates.
+```{r lag_terms, echo=TRUE}
+lagged_predictors <- cbind(
+  lagged_brazil_counts = stats::lag(ts_obj[,"brazil_counts"], -20), # lag of 8 because cases in Brazil began to appear about 2 months prior to when they started popping up in the US
+  lagged_ph_accounts = stats::lag(ts_obj[,"ph_account_counts"], -2), # based on CCF
+  lagged_tweet_counts = stats::lag(ts_obj[, "tweet_count"], -5), # based on CCF
+  lagged_submission_counts = stats::lag(ts_obj[, "submission_count"], -14) # based on CCF
+)
+```
+
+
+#### ARIMA(3,1) + Tweet Count + Public Health Account Tweets + Lagged Brazil Case Counts + Lagged Reddit Submissions
+```{r}
+ar_tweet_reddit_ph_account_brazil <- Arima(
+  ts_obj[53:104,"observed"],
+  xreg = cbind(
+    ts_obj[53:104, c("tweet_count", "ph_account_counts")],  
+    brazil_cases=lagged_predictors[53:104, "lagged_brazil_counts"],
+    reddit_submissions=lagged_predictors[53:104, "lagged_submission_counts"]
+    ), 
+  order=c(3, 1, 0)
+  )
+f_tweet_reddit_ph_account_brazil <- forecast(
+  ar_tweet_reddit_ph_account_brazil, 
+  xreg = cbind(
+    ts_obj[53:104, c("tweet_count", "ph_account_counts")],  
+    brazil_cases=lagged_predictors[53:104, "lagged_brazil_counts"],
+    reddit_submissions=lagged_predictors[53:104, "lagged_submission_counts"]
+    )
+  )
+summary(ar_tweet_reddit_ph_account_brazil)
+```
+
+<p>Looks like adding in the lagged Brazil case counts and and Reddit submissions improved our model by further reducing the RMSE down to __42.93822__!</p>
+
+
+So here is our final model:<br>
+
+$Y_t = \beta_0+\beta_1*Y_{t-1}+\beta_2*Y_{t-2}+\beta_3*Y_{t-3}+\beta_4*X_1+\beta_5*X_2+\beta_6*X_3+\beta_7*X_4$ <br>
+
+Where, <br>
+$Y_t$ is the number of cases of Zika in the US in week $t$ <br>
+$Y_t-1$ is the number of cases of Zika in the US in week $t-1$ <br>
+$Y_t-2$ is the number of cases of Zika in the US in week $t-2$ <br>
+$Y_t-3$ is the number of cases of Zika in the US in week $t-3$ <br>
+$X_1$ is the number of Zika related Tweets shared in week $t$ <br>
+$X_2$ is the number of Zika related Tweets shared by Public Health Accounts the US in week $t$ <br>
+$X_3$ is the number of cases of Zika in Brazil in week $t-20$ <br>
+$X_4$ is the number of Zika related submissions made to Reddit in week $t-14$ <br>
+
+
+# 3. Evaluation
+
+<p>We evaluate the performance of our final model by:</p>
+1. Visually assessing how well the predicted trend fits the actual trend
+2. Computing the one-step-ahead prediction error
+
+```{r}
+# Visualize Fitted vs Actual
+predictions <- as.data.frame(cbind(
+  week = 1:52,
+  actual = ts_obj[53:104, c("observed")],
+  pure_arima = f3$fitted,
+  tweets_only = f_tweet$fitted,
+  final_model = f_tweet_reddit_ph_account_brazil$fitted
+  ))
+
+
+predictions %>%
+  gather(key = "Model", value = "Prediction",  c(actual, pure_arima, tweets_only, final_model)) %>%
+  ggplot(aes(x = week, y = Prediction, color = Model)) +
+  geom_line(size = 1) + 
+  scale_color_discrete(
+    name = "Models", 
+    labels = c(
+      "actual", 
+      "ARIMA(3,1)", 
+      "ARIMA(3, 1) + Tweet Count", 
+      "ARIMA(3,1) + Tweet Count + PH Tweet Count + Brazil Case Count + Reddit Submission Count"
+      )
+    )
+```
+
+<p>It seems like all the models are adhering to the true case count trend in 2016 (for which both actual and predicted values are plotted). However, they seem to be underestimating the total number of cases. Since the difference in prediction error across these four models was not that large, it makes sense that none of them follow an absurd trend that deviates vastly from the actual counts.</p>
+
+
+# 4. Prediction
+
+
 
 
