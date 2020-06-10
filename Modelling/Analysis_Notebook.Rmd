@@ -1,0 +1,266 @@
+---
+title: "Forecasting the Outbreak of Zika with Indirect Data Sources"
+author: "Taneisha Arora, Tristan Dam"
+date: "June 8, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse) # data manipulation
+library(forecast) # for ts modelling
+library(urca) # for unit root test
+
+# for global settings (use knitr)
+knitr::opts_chunk$set(
+  echo = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 6,
+  fig.show = TRUE
+)
+```
+
+```{r housekeeping}
+# Read in dataset
+forecast_df <- read_csv("../Data/zika_timeseries.csv")
+```
+
+
+## 1. Exploratory Data Analysis
+
+<p>
+We collected cumulative weekly case counts of the Zika Virus over the course of the years **2015, 2016, and 2017**. The case counts we collected were from the **Brazil**, the country where the first confirmed case was reported in May 2015, and the **United States**.
+</p>
+
+<p>
+Our primary goal is to be able to forecast the number of Zika Cases that will be reported in the United States in the following week. In other words, using data from weeks 1 to N-1, predict the number of new cases in week N. So, our "Y" is the number of Zika cases reported in the United States in a given week. Before beginning the modelling process we will need to:
+</p>
+
+1.1 Check for Anomoulous Data Points <br>
+1.2 Establish Stationarity <br>
+1.3 Explore which Features could be Associated with Weekly US Zika Case Counts <br>
+1.4 Determine whether there is Autocorrelation and/or Cross-correlation <br>
+
+
+### 1.1 Check for Anomoulous Data Points
+
+<p>Before deving into visualizations, we will take a look at our raw data. This is to check for any anomalyous values such as negative case counts. For this purpose we will query the `brazil_counts` and `observed` columns in our preprocessed dataset. We do not check the other fields as those were derived from our original data sources (Twitter/Reddit databases) and have, so, been preprocessed.</p>
+
+```{r verify}
+forecast_df %>%
+  rowid_to_column() %>%
+  filter(brazil_counts < 0 | observed < 0) %>%
+  select(rowid, brazil_counts, observed) %>%
+  knitr::kable()
+```
+
+<p> We see that in row 123 (which corresponds to week 123 since the data frame is ordered by week number) the number of observed cases in the United States is -38. This could either be a decrease in cases from the previous week, or simply an error. We could either impute the mean of the case counts of the previous and the next weeks, which would suggest that the number of new cases in week 123 was similart to those observed in the weeks immediately following and preceding it. Alternatively, the negative value could have arisen from a decrease in cumulative cases in week 123 relative to week 122. This interpretation suggests that the number of new cases reported in week 123 was zero</p>
+
+<p>We will impute the negative value with the mean case count for weeks 122 and 124.</p>
+```{r impute}
+observations_to_impute <- c(123)
+
+forecast_df[observations_to_impute,"observed"] <- (forecast_df[observations_to_impute-1,"observed"] + forecast_df[observations_to_impute+1,"observed"])/2
+```
+
+### 1.2 Establishing Stationarity
+
+<p>Having scrubbed the data for any invalid values, we will now create some time series plots to visualize how the number of reported Zika cases in the United States varies over time. We will first perform a qualitative check by looking for patterns in the time series plot, followed by a more formal Unit Root test, to determine whether our data is stationary or not, and if differencing is required..</p>
+
+```{r ts_objects}
+scaled_forecast <- forecast_df %>%
+  mutate_all(scale)
+
+# Time series object
+ts_obj <- ts(forecast_df, start = c(2015, 1), end = c(2017, 52) , frequency = 52)
+
+# Time series object with scaled counts
+ts_obj_scaled <- ts(scaled_forecast, start = c(2015, 1), end = c(2017, 52), frequency = 52)
+```
+
+#### 1.2.a Qualitative Scan
+```{r eda_cases}
+observed_vals <- forecast_df %>% 
+  mutate(observed = if_else(is.na(observed), 0, observed)) 
+
+autoplot(ts_obj[,c("observed")]) +
+  xlab("Year") + 
+  ylab("Case Counts Counts") +
+  labs(title = "Weekly Zika Case Counts in the US, Over Time")
+```
+
+<p>We see a peak in cases a few months into 2016. The case counts decrease, progressing into 2017. Since the data does not look random at every time point, but rather shows a distinctive pattern (peak/fall), we suspect our data is **non-stationary**.</p>
+
+#### 1.2.b Unit Root Test
+
+<p>The high level hypotheses of the Unit Root test are:</p>
+
+$H_0 : The\;data\;is\;stationary$ <br>
+$H_a: The\;data\;is\;not\;stationary$
+```{r eda_cases_us}
+ur.kpss(observed_vals$observed) %>% summary()
+```
+<p> The test statistic, **0.4374** is **greater** than the 5% critical value, **0.463** which means that the **p-value is less than 0.05**, and we accept the alternative, that our data is **__not stationary__**.</p>
+
+<p> Here is a visualziaion of the first differenced Weekly US case counts: </p>
+```{r differneced_plot}
+autoplot(diff(ts_obj_scaled[,c("observed")])) +
+  xlab("Year") + 
+  ylab("(Differenced) Normalized US Zika Case Counts")
+
+```
+
+
+### 1.3 Explore which Features could be Associated with Weekly US Zika Case Counts
+
+<p> Now we will plot some of our weekly features along with the Weekly US Zika Case counts to see how certain features that follow the trend of the Zika cases reported in the US</p>
+
+```{r cases_brazil}
+autoplot(ts_obj_scaled[,c("observed", "brazil_counts")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Brazil Count")) +
+  labs(title = "Weekly Zika Case Counts in the US and Brazil, Over Time")
+```
+
+<p> **Observations:** We see that the Zika cases in Brazil peak in early 2016. This is before the peak in the United States, and so, case counts from Brazil, lagged by a few weeks, could potentially be useful in the forecasting of cases in the US.</p>
+
+
+```{r cases_tweets}
+autoplot(ts_obj_scaled[,c("observed", "tweet_count")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Tweet Count")) +
+  labs(title = "Weekly Zika Case Counts in the US and Weekly Tweek Count, Over Time")
+```
+
+<p> **Observations:** We see that the Zika cases in the United States align fairly well with the number of weekly tweets containing Zika-related keywords. Theser is a small spike seen in the earlier weeks of 2016, that might correspond to the outbreak of the virus in Brazil.</p>
+
+```{r cases_reddit}
+autoplot(ts_obj_scaled[,c("observed", "submission_count", "comment_count")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(
+    name = "Counts", 
+    labels = c("US Case Count", "Reddit Submission Count", "Reddit Comment Count")
+    ) +
+  labs(
+    title = "Weekly Zika Case Counts in the US, Weekly Reddit Submission Count, and Reddit Comment Count, Over Time"
+    )
+```
+
+<p> **Observations:** The number of reddit submissions and comments pertaining to the Zika virus also follows trends similar to the US case counts. However, an interesting thing to note is that, given that the reddit data is not restricted to users in the United States, the Zika-related activity shows a much higher peak around the time the virus outbroke in Brazil compared to the chatter on Twitter, that was limited to the US.</p>
+
+```{r cases_accounts}
+autoplot(ts_obj_scaled[,c("observed", "ph_account_counts")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(
+    name = "Counts", 
+    labels = c("US Case Count", "Count of Tweets from Public Health Accounts")
+    ) +
+  labs(
+    title = "Weekly Zika Case Counts in the US, Weekly Number of Tweets from Public Health Accounts, Over Time"
+    )
+```
+
+<p> **Observations:** Although there weren't too many tweets shared by public health accounts, upon normalization, the chatter amongst thepublic health community adheres fairly well to the US case count trends.</p>
+
+```{r count_tweet_keywords}
+autoplot(ts_obj_scaled[,c("observed", "tk_zika", "tk_mosquito", "tk_flavivirus", "tk_zikv", "tk_aedes")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(
+    name = "Counts", 
+    labels = c(
+      "US Case Count",
+      "Occurances of the word 'zika'", 
+      "Occurances of the word 'mosquito'",
+      "Occurances of the word 'flavivirus'",
+      "Occurances of the word 'zikv'",
+      "Occurances of the word 'aedes'"
+      )
+    ) +
+  labs(
+    title = "Weekly Zika Case Counts in the US, Weekly Keyword Occurances in Tweets, Over Time"
+    )
+```
+
+<p> **Observations:** Rarely occuring keywords like 'flavivirus' and 'aedes' seem to follow very noisy trends. The more abundant ones such as 'zika' and 'mosquito' follow trends similar to those seeen for overall tweet counts. This might be because a majoirty of the Zika-related tweets contain those two words.</p>
+
+```{r count_subreddit_submissions}
+autoplot(ts_obj_scaled[,c("observed", "num_science_submissions", "num_zika_submissions", "num_health_submissions")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(
+    name = "Counts", 
+    labels = c(
+      "US Case Count",
+      "Submissions made to the 'science' subreddit", 
+      "Submissions made to the 'zika' subreddit", 
+      "Submissions made to the 'health' subreddit"
+      )
+    ) +
+  labs(
+    title = "Weekly Zika Case Counts in the US, Weekly Submissions in Specific Subreddits, Over Time"
+    )
+```
+<p> **Observations:** The number of reddit submissions made to the 'science' subreddit seems to **precede** the trend the US case counts is about to follow. This suggests, that a lagged predictor for the number of 'sicence' submissions might be useful in predicting US case counts.</p>
+
+#### 1.4 Determine whether there is Autocorrelation and/or Cross-correlation
+
+<p> Now we will visualize the correlation between various lags within and across timeseries. We will perform first differencing on our data before plotting these auto and cross correlation plots to prevent</p>
+
+##### 1.4.a Autocorrelation
+
+<p>We will use autocorrelation plots to determine case counts from how many weeks prior is most correlated to the 'present' number of case counts. In other words, this will help us determine whether we can leverage past case counts to predict future case counts. To check for autocorrelation, we will first perform a qualitative scan of our first differenced Weekly US cases counts.</p>
+
+```{r acf}
+ggAcf(diff(forecast_df$observed), na.action = na.omit) +
+  labs(title = "Autocorrelation Function Plot for Differenced US Zika Case Counts")
+
+ggAcf(diff(forecast_df$observed), na.action = na.omit, type = "partial") +
+  labs(title = "Partial Autocorrelation Function Plot for Differenced US Zika Case Counts")
+```
+
+<p> **Observations:** Case counts from  *1*, *2*, and *3* weeks ago seem to be most correlated with the 'current' case count. This is suggests that lag terms of 1, 2, and 3 might be worth trying out.
+
+##### 1.4.b Cross-correlation
+
+<p> The timeseries plots that showed how the trends of our other features compared to the observed number of weekly cases of Zika in the US suggested that there might be some correlation between these other timeseries and the US Zika case count time series. To check for lagged correlations between the US Zika case counts and the other (time dependent) features in our dataset, we will check the cross-correlation. Based off of our earlier timeseries plots, it seemed like the following features could potentially be cross correlated with the Weekly Case Counts of the zika Virus in the US:
+
+* Brazil Case Counts
+* Tweet Counts
+* Reddit Submissions/Comments
+* Number of Tweets from Public Health Accounts
+
+```{r brazil_observed}
+ggCcf(x = diff(forecast_df$observed), y = diff(forecast_df$brazil_counts), na.action = na.omit) +
+  labs(title = "Cross Correlation Function Plot Between Differenced US Zika Case Counts and Brazil Case Counts")
+```
+
+<p>**Observations:** It seems like case counts in Brazil reported 20 weeks (or 5 months) earlier have some correlation with the current number of cases in the US.</p>
+
+```{r tweets_observed}
+ggCcf(x = diff(forecast_df$observed), y = diff(forecast_df$tweet_count), na.action = na.omit) +
+  labs(title = "Cross Correlation Function Plot Between Differenced US Zika Case Counts and Tweet Counts")
+```
+
+<p>**Observations:** We see both positive and negativ lag terms that are significant for Tweet counts. The negative lag terms suggest that the Tweets appear __after__ the cases are reported. However, it also appears that Tweet counts from 3 or 6 weeks before may be relevant in predicting the number of reported cases in the current week.</p>
+
+```{r}
+ggCcf(x = diff(forecast_df$observed), y = diff(forecast_df$submission_count), na.action = na.omit) +
+  labs(title = "Cross Correlation Function Plot Between Differenced US Zika Case Counts and Reddit Submissions")
+```
+
+<p>**Observations:** It appears that the number of reddit submissions from 14 weeks prior might be relevant in preicting reported cases of Zika.</p>
+
+```{r}
+ggCcf(x = diff(forecast_df$observed), y = diff(forecast_df$ph_account_counts), na.action = na.omit) +
+  labs(title = "Cross Correlation Function Plot Between Differenced US Zika Case Counts and Number of Tweets from Public Health Accounts")
+```
+
+
+<p>**Observations:** The number of tweets made by Public Health affiliated accounts seem to be highly cross-correlated with US case counts for lag terms of 2, 4, and 6. The recurrance of a significant corss-correlation for every two weeks into the past is suggestive of a peak and then fall. So, it seems like the number of tweets from two weeks ago might be most useful for Zika case count forecasting.</p>
+
+
