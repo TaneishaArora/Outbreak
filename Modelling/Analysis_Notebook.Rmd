@@ -442,6 +442,8 @@ $X_4$ is the number of Zika related submissions made to Reddit in week $t-14$ <b
 1. Visually assessing how well the predicted trend fits the actual trend
 2. Computing the one-step-ahead prediction error
 
+### 1. Qualitiative Assessment
+
 ```{r}
 # Visualize Fitted vs Actual
 predictions <- as.data.frame(cbind(
@@ -471,8 +473,53 @@ predictions %>%
 <p>It seems like all the models are adhering to the true case count trend in 2016 (for which both actual and predicted values are plotted). However, they seem to be underestimating the total number of cases. Since the difference in prediction error across these four models was not that large, it makes sense that none of them follow an absurd trend that deviates vastly from the actual counts.</p>
 
 
+### 2. Evaluating Metrics
+
+<p> The metrics we compared to assess the various models we tried were:</p>
+* Root Mean Squared Error (RMSE) <br>
+* A Modified Version of the $R^2$ <br>
+* Akaike's Information Criterion (AIC) <br>
+
+#### RMSE
+
+<p>The Root Mean Squared Error for each model was computed as follows:</p>
+
+$RMSE = \sum{\sqrt{(\hat{y_{t+h|t}} - y_{t+h})^2/}/n}$<br>
+
+<p> To compute the __one step ahead__ prediction/error, we set $h = 1$. We interpret the RMSE as the average number of case counts our prediction was off by.</p>
+
+#### Modified $R^2$
+
+<p>We computed the $R^2$ values for the ARIMA models as the correlation between the fitted and the predicte values. We interpret this modified version of the $R^2$ as the total approximate variance in the number of predicted weekly case counts explained by the model.</p>
+
+<p>All the evaluation metrics, except the modified $R^2$ are printed in the model summaries above. Here are the values of the modified $R^2$ for the models we tried:</p>
+
+```{r}
+cor(fitted(ar_1), ts_obj[53:104,"observed"])^2
+
+
+cor(fitted(ar_tweet), ts_obj[53:104,"observed"])^2
+
+
+cor(fitted(ar_tweet_reddit_ph_account_brazil), ts_obj[53:104,"observed"])^2
+
+```
+
+
+
 # 4. Prediction
 
+<p>Given the number of Tweets shared, Tweets made by public health affiliated accounts, case counts of Zika reported 20 weeks ago, and number of Zika related submissions made 14 weeks ago, we can predict the number of potential occurances of the Zika Virus in the United States in the current week.</p>
 
+### Example:
+
+```{r}
+week_75_predicted <- f_tweet_reddit_ph_account_brazil$fitted[75-52]
+
+week_75_actual <- ts_obj[75, "observed"]
+
+paste("Observed", week_75_actual)
+paste("Predicted", week_75_predicted)
+```
 
 

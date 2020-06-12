@@ -21,30 +21,36 @@ ts_obj_scaled <- ts(scaled_forecast, start = c(2015, 1), end = c(2017, 52), freq
 # Timeseries plots
 
 # Obserevations + Twitter
-autoplot(ts_obj_scaled[,c("observed", "tweet_count")]) +
+autoplot(ts_obj_scaled[,c("observed", "tweet_count", "brazil_counts")]) +
   xlab("Year") + 
   ylab("Normalized Counts") +
-  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Tweet Count"))
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Tweet Count", "Brazil Count"))
 
 # Observations + Reddit
-autoplot(ts_obj_scaled[,c("observed", "submission_count", "comment_count")]) +
+autoplot(ts_obj_scaled[,c("observed", "comment_count", "brazil_counts")]) +
   xlab("Year") + 
   ylab("Normalized Counts") +
-  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Reddit Submission Count", "Reddit Comment Count"))
-
-
-# Observations + Brazil
-autoplot(ts_obj_scaled[,c("observed", "brazil_counts")]) +
-  xlab("Year") + 
-  ylab("Normalized Counts") +
-  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Brazil Case Counts"))
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Reddit Comment Count", "Brazil Count"))
 
 
 # Observations + Public Health Account Tweets
-autoplot(ts_obj_scaled[,c("observed", "ph_account_counts")]) +
+autoplot(ts_obj_scaled[,c("observed", "ph_account_counts", "brazil_counts")]) +
   xlab("Year") + 
   ylab("Normalized Counts") +
-  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Public Health Account Tweet Counts"))
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Public Health Account Tweet Counts", "Brazil Count"))
+
+# Observations + Flavivirus
+autoplot(ts_obj_scaled[,c("observed", "tk_flavivirus", "brazil_counts")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "'Flavivirus' in Tweet", "Brazil Count"))
+
+
+# Observations + Science Comments
+autoplot(ts_obj_scaled[,c("observed", "num_zika_submissions", "brazil_counts")]) +
+  xlab("Year") + 
+  ylab("Normalized Counts") +
+  scale_color_discrete(name = "Counts", labels = c("US Case Count", "Submissions to 'Zika' Subreddit", "Brazil Count"))
 
 
 # Is our data stationary?
@@ -54,24 +60,43 @@ observed_vals <- forecast_df %>%
 
 observed_vals$observed %>% ggtsdisplay(main="")
 
+autoplot(ts_obj_scaled[,c("observed")]) +
+  xlab("Year") + 
+  ylab("Normalized US Zika Case Counts")
+
+autoplot(diff(ts_obj_scaled[,c("observed")])) +
+  xlab("Year") + 
+  ylab("(Differenced) Normalized US Zika Case Counts")
+
 
 # Our data is stationary
-ur.df(diff(observed_vals$observed)) %>% summary()
+ur.kpss(observed_vals$observed) %>% summary()
 ndiffs(observed_vals$observed)
 
+
 # Determine if there is auto-correlation in our data
-acf(diff(forecast_df$observed), na.action = na.omit)
+ggAcf(diff(forecast_df$observed), na.action = na.omit) +
+  labs(title = "Autocorrelation Function Plot for Differenced US Zika Case Counts")
+
+ggAcf(diff(forecast_df$observed), na.action = na.omit, type = "partial") +
+  labs(title = "Partial Autocorrelation Function Plot for Differenced US Zika Case Counts")
+  
 Box.test(diff(observed_vals$observed), lag = 2)
 
 
 # Cross Correlation plots
-ccf(x = diff(forecast_df$observed), y = diff(forecast_df$brazil_counts), na.action = na.omit)
+ggCcf(x = diff(forecast_df$observed), y = diff(forecast_df$brazil_counts), na.action = na.omit) +
+  labs(title = "Cross Correlation Function Plot Between Differenced US Zika Case Counts and Brazil Case Counts")
+
 
   
-ccf(x = diff(forecast_df$observed), y = diff(forecast_df$submission_count), na.action = na.omit)
+ggCcf(x = diff(forecast_df$observed), y = diff(forecast_df$submission_count), na.action = na.omit) +
+  labs(title = "Cross Correlation Function Plot Between Differenced US Zika Case Counts and Reddit Submission Counts")
 
 
-ccf(x = diff(forecast_df$observed), y = diff(forecast_df$tweet_count), na.action = na.omit)
+ggCcf(x = diff(forecast_df$observed), y = diff(forecast_df$tweet_count), na.action = na.omit) +
+  labs(title = "Cross Correlation Function Plot Between Differenced US Zika Case Counts and Tweet Counts")
+
 
 
 # Modelling
@@ -82,7 +107,8 @@ ccf(x = diff(forecast_df$observed), y = diff(forecast_df$tweet_count), na.action
 # Lagged predictors
 lagged_predictors <- cbind(
   lagged_brazil_counts = stats::lag(ts_obj[, "brazil_counts"], 6),
-  lagged_reddit_counts = stats::lag(ts_obj[, "submission_count"], 6)
+  lagged_reddit_counts = stats::lag(ts_obj[, "submission_count"], 6),
+  lagged_tweet_counts = stats::lag(ts_obj[, "tweet_count"], 5)
 )
 
 
@@ -91,13 +117,19 @@ f1 <- forecast(ar_1)
 summary(ar_1)
 
 
-ar_2 <- Arima(ts_obj[53:104,"observed"], xreg = ts_obj[53:104, c("tweet_count")], order=c(3, 1, 0))
-f2 <- forecast(ar_2, xreg = ts_obj[53:104, c("tweet_count")])
+ar_2 <- Arima(ts_obj[53:104,"observed"], xreg = lagged_predictors[53:104, c("lagged_tweet_counts")], order=c(3, 1, 0))
+f2 <- forecast(ar_2, xreg = lagged_predictors[53:104, c("lagged_tweet_counts")])
 summary(ar_2)
 
 ar_3 <- Arima(ts_obj[53:104,"observed"], xreg = lagged_predictors[53:104, c("lagged_brazil_counts")], order=c(2, 1, 0))
 f3 <- forecast(ar_3, xreg = lagged_predictors[53:104, c("lagged_brazil_counts")])
 summary(ar_3)
+
+
+cor(fitted(ar_1), ts_obj[53:104,"observed"])^2
+
+cor(fitted(ar_tweet_reddit_ph_account_brazil), ts_obj[53:104,"observed"])^2
+
 
 
 # Visualize Fitted vs Actual
@@ -110,7 +142,7 @@ predictions <- as.data.frame(cbind(
   ))
 
 predictions %>%
-  gather(key = "Model", value = "Prediction",  c("actual", "model1", "model2", "model3")) %>%
+  gather(key = "Model", value = "Prediction",  c("actual", "model1", "model2")) %>%
   ggplot(aes(x = week, y = Prediction, color = Model)) +
   geom_line()
 
@@ -120,7 +152,7 @@ predictions %>%
 
 # Time Series Linear Regression (use info at specific time point)
 # Tweet Count
-lr_baseline_twitter <- tslm(observed ~ tweet_count, data = ts_obj)
+lr_baseline_twitter <- tslm(observed ~ tweet_count, data = ts_obj[53:104,])
 
 # reddit submissions
 # zika, 
